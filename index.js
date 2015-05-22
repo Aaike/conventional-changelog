@@ -1,33 +1,53 @@
-'use strict';
 var fs = require('fs');
 var git = require('./lib/git');
-var writeLog = require('./lib/writeLog');
-var extend = require('lodash').assign;
+var writer = require('./lib/writer');
+var extend = require('lodash.assign');
+
+module.exports = generate;
 
 function generate(options, done) {
-  function getChangelogCommits() {
-    git.getCommits(options, function(err, commits) {
-      if (err) {
-        return done('Failed to read git log.\n' + err);
-      }
-      writeChangelog(commits);
+  options = extend({
+    version: null,
+    to: 'HEAD',
+    file: 'CHANGELOG.md',
+    grep: null,
+    subtitle: '',
+    log: console.log.bind(console),
+  }, options || {});
+
+  if (!options.version) {
+    return done('No version specified');
+  }
+
+  git.latestTag(function(err, tag) {
+    if (err || !tag) return done('Failed to read git tags.\n'+err);
+    getChangelogCommits(tag);
+  });
+
+  function getChangelogCommits(latestTag) {
+    options.from = options.from || latestTag;
+    options.to = options.to || 'HEAD';
+
+    options.log('Generating changelog from %s to %s...', options.from, options.to);
+
+    git.getCommits({
+      from: options.from,
+      to: options.to,
+      grep: options.grep,
+    }, function(err, commits) {
+      if (err) return done('Failed to read git log.\n'+err);
+      writeLog(commits);
     });
   }
 
-  function writeChangelog(commits) {
+  function writeLog(commits) {
     options.log('Parsed %d commits.', commits.length);
-    writeLog(commits, options, function(err, changelog) {
-      if (err) {
-        return done('Failed to write changelog.\n' + err);
-      }
+    writer.writeLog(commits, options, function(err, changelog) {
+      if (err) return done('Failed to write changelog.\n'+err);
 
       if (options.file && fs.existsSync(options.file)) {
-        fs.readFile(options.file, {
-          encoding: 'UTF-8'
-        }, function(err, contents) {
-          if (err) {
-            return done('Failed to read ' + options.file + '.\n' + err);
-          }
+        fs.readFile(options.file, {encoding:'UTF-8'}, function(err, contents) {
+          if (err) return done('Failed to read ' + options.file + '.\n'+err);
           done(null, changelog + '\n' + String(contents));
         });
       } else {
@@ -35,14 +55,5 @@ function generate(options, done) {
       }
     });
   }
-
-  options = extend({
-    file: 'CHANGELOG.md',
-    log: console.log.bind(console),
-    warn: console.warn.bind(console)
-  }, options || {});
-
-  getChangelogCommits();
 }
 
-module.exports = generate;
